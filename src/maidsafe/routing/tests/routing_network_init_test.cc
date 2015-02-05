@@ -44,33 +44,137 @@ namespace routing {
 
 namespace test {
 enum class DataType;
-
 class VaultFacade;
+
+
+
+template <typename Child>
+class DummyRoutingNode {
+ public:
+  DummyRoutingNode(asio::io_service& /*io_service*/, boost::filesystem::path /*db_location*/,
+              const passport::Pmid& /*pmid*/) {}
+
+  DummyRoutingNode(const DummyRoutingNode&) = delete;
+  DummyRoutingNode(DummyRoutingNode&&) = delete;
+  DummyRoutingNode& operator=(const DummyRoutingNode&) = delete;
+  DummyRoutingNode& operator=(DummyRoutingNode&&) = delete;
+  ~DummyRoutingNode() = default;
+
+  void Fun() {
+    std::cout << "\n In DummyRoutingNode::fun()";
+    static_cast<Child*>(this)->HandleFun();
+  }
+
+  template <typename DataType>
+  void TriggerHandleGet(SourceAddress from, Authority from_authority, Authority authority,
+                        DataType data_type, Identity data_name) {
+    static_cast<Child*>(this)->HandleGet(from, from_authority, authority, data_type, data_name);
+  }
+};
+
+struct MaidManagerAccount {
+  MaidManagerAccount() = default;
+  MaidManagerAccount(const MaidManagerAccount&) = default;
+  MaidManagerAccount(MaidManagerAccount&& other) MAIDSAFE_NOEXCEPT
+      : name(std::move(other.name)),
+        stored(std::move(other.stored)),
+        available(std::move(other.available)) {}
+  ~MaidManagerAccount() = default;
+  MaidManagerAccount& operator=(const MaidManagerAccount&) = default;
+  MaidManagerAccount& operator=(MaidManagerAccount&& rhs) MAIDSAFE_NOEXCEPT {
+    name = std::move(rhs.name);
+    stored = std::move(rhs.stored);
+    available = std::move(rhs.available);
+    return *this;
+  }
+
+  bool operator==(const MaidManagerAccount& other) const {
+    return std::tie(name, stored, available) == std::tie(other.name, other.stored, other.available);
+  }
+  bool operator!=(const MaidManagerAccount& other) const { return !operator==(other); }
+  bool operator<(const MaidManagerAccount& other) const {
+    return std::tie(name, stored, available) < std::tie(other.name, other.stored, other.available);
+  }
+  bool operator>(const MaidManagerAccount& other) { return operator<(other); }
+  bool operator<=(const MaidManagerAccount& other) { return !operator>(other); }
+  bool operator>=(const MaidManagerAccount& other) { return !operator<(other); }
+
+  Address name;
+  uint64_t stored;
+  uint64_t available;
+};
+
+struct PmidManagerAccount {
+  PmidManagerAccount() = default;
+  PmidManagerAccount(const PmidManagerAccount&) = default;
+  PmidManagerAccount(PmidManagerAccount&& other) MAIDSAFE_NOEXCEPT
+      : name(std::move(other.name)),
+        stored(std::move(other.stored)),
+        available(std::move(other.available)) {}
+  ~PmidManagerAccount() = default;
+  PmidManagerAccount& operator=(const PmidManagerAccount&) = default;
+  PmidManagerAccount& operator=(PmidManagerAccount&& rhs) MAIDSAFE_NOEXCEPT {
+    name = std::move(rhs.name);
+    stored = std::move(rhs.stored);
+    available = std::move(rhs.available);
+    return *this;
+  }
+
+  bool operator==(const PmidManagerAccount& other) const {
+    return std::tie(name, stored, available) == std::tie(other.name, other.stored, other.available);
+  }
+  bool operator!=(const PmidManagerAccount& other) const { return !operator==(other); }
+  bool operator<(const PmidManagerAccount& other) const {
+    return std::tie(name, stored, available) < std::tie(other.name, other.stored, other.available);
+  }
+  bool operator>(const PmidManagerAccount& other) { return operator<(other); }
+  bool operator<=(const PmidManagerAccount& other) { return !operator>(other); }
+  bool operator>=(const PmidManagerAccount& other) { return !operator<(other); }
+
+  Address name;
+  uint64_t stored;
+  uint64_t available;
+};
+
 template <typename Child>
 class MaidManager {
  public:
+  using account_type = MaidManagerAccount;
   template <typename T>
-  void HandleGet(SourceAddress /* from */, Identity /* data_name */) {}
-  template <typename T>
-  void HandlePut(SourceAddress /* from */, Identity /* data_name */, DataType /* data */) {}
+  void HandlePut(SourceAddress from, Identity data_name, T data) {
+    auto found = static_cast<Child*>(this)->maid_account(std::get<0>(from));
+    if (!found)
+      return;  // invalid we can return an error - no account if we wish
+    found->stored += data.size();
+    static_cast<Child*>(this)
+        ->template Put<T>(data_name, data_name, data, [](asio::error_code error) {
+          if (error)
+            LOG(kWarning) << "could not send from MiadManager (Put)";
+        });
+  }
   void HandleChurn(CloseGroupDifference) {
     // send all account info to the group of each key and delete it - wait for refreshed accounts
   }
 };
+
 template <typename Child>
 class VersionManager {};
 template <typename Child>
 class DataManager {
  public:
+  using account_type = MaidManagerAccount;
   template <typename T>
-  void HandleGet(SourceAddress from, Identity data_name) {
+  void HandleGet(SourceAddress /*from*/, Identity /*data_name*/) {
+    std::cout << "\n In DataManager::HandleGet. Now calling DummyRoutingNode::Fun ... \n";
+    static_cast<Child*>(this)->template Fun();
     // FIXME(dirvine) We need to pass along the full source address to retain the ReplyTo field
     // :01/02/2015
-    static_cast<Child*>(this)
-        ->template Get<T>(data_name, std::get<0>(from), [](asio::error_code error) {
-          if (error)
-            LOG(kWarning) << "could not send from datamanager ";
-        });
+// can be enabled once dummy routing node implements fake Get()
+//    static_cast<Child*>(this)
+//        ->template Get<T>(data_name, std::get<0>(from), [](asio::error_code error) {
+//          if (error)
+//            LOG(kWarning) << "could not send from datamanager ";
+//        });
   }
   template <typename T>
   void HandlePut(SourceAddress /* from */, Identity /* data_name */, DataType /* data */) {}
@@ -81,6 +185,7 @@ class DataManager {
 template <typename DataManagerType, typename VersionManagerType>
 class NaeManager {
  public:
+  using account_type = MaidManagerAccount;
   template <typename T>
   void HandleGet(SourceAddress from, Identity data_name);
   template <typename T>
@@ -89,6 +194,7 @@ class NaeManager {
 template <typename Child>
 class PmidManager {
  public:
+  using account_type = MaidManagerAccount;
   template <typename T>
   void HandleGet(SourceAddress /* from */, Identity /* data_name */) {}
   template <typename T>
@@ -100,6 +206,7 @@ class PmidManager {
 template <typename Child>
 class PmidNode {
  public:
+  using account_type = PmidManagerAccount;
   template <typename T>
   void HandleGet(SourceAddress /* from */, Identity /* data_name */) {}
   template <typename T>
@@ -116,9 +223,14 @@ class VaultFacade : public test::MaidManager<VaultFacade>,
                     public test::DataManager<VaultFacade>,
                     public test::PmidManager<VaultFacade>,
                     public test::PmidNode<VaultFacade>,
-                    public RoutingNode<VaultFacade> {
+                    public DummyRoutingNode<VaultFacade> {
  public:
-  VaultFacade() = default;
+//  VaultFacade() = default;
+  VaultFacade(asio::io_service& io_service, boost::filesystem::path db_location,
+              const passport::Pmid& pmid)
+      : DummyRoutingNode<VaultFacade>(io_service, db_location, pmid) {
+  }
+
   ~VaultFacade() = default;
   // what functors for Post and Request/Response
   enum class FunctorType { FunctionOne, FunctionTwo };
@@ -130,27 +242,33 @@ class VaultFacade : public test::MaidManager<VaultFacade>,
   // std::tuple<ClientManager, NaeManager, NodeManager> our_personas;  // i.e. handle
   // get/put
   // std::tuple<ImmutableData, MutableData> DataTuple;
+
+  void HandleFun() {
+    std::cout << "\n In VaultFacade::fun()" << std::endl;
+  }
+
   template <typename DataType>
   void HandleGet(SourceAddress from, Authority /* from_authority */, Authority authority,
                  DataType data_type, Identity data_name) {
+    std::cout << "\n In VaultFacade::HandleGet \n";
     switch (authority) {
       case Authority::nae_manager:
         if (data_type == DataType::ImmutableData)
           DataManager::template HandleGet<ImmutableData>(from, data_name);
         else if (data_type == DataType::MutableData)
-          DataManager::template HandleGet<MutableData>(from, data_name);
+          DataManager::template HandleGet<ImmutableData>(from, data_name);
         break;
       case Authority::node_manager:
         if (data_type == DataType::ImmutableData)
           PmidManager::template HandleGet<ImmutableData>(from, data_name);
         else if (data_type == DataType::MutableData)
-          PmidManager::template HandleGet<MutableData>(from, data_name);
+          PmidManager::template HandleGet<ImmutableData>(from, data_name);
         break;
       case Authority::managed_node:
         if (data_type == DataType::ImmutableData)
           PmidNode::template HandleGet<ImmutableData>(from, data_name);
         else if (data_type == DataType::MutableData)
-          PmidNode::template HandleGet<MutableData>(from, data_name);
+          PmidNode::template HandleGet<ImmutableData>(from, data_name);
         break;
       default:
         break;
@@ -166,19 +284,19 @@ class VaultFacade : public test::MaidManager<VaultFacade>,
         if (data_type == DataType::ImmutableData)
           DataManager::template HandlePut<ImmutableData>(from, data_type);
         else if (data_type == DataType::MutableData)
-          DataManager::template HandlePut<MutableData>(from, data_type);
+          DataManager::template HandlePut<ImmutableData>(from, data_type);
         break;
       case Authority::node_manager:
         if (data_type == DataType::ImmutableData)
           PmidManager::template HandlePut<ImmutableData>(from, data_type);
         else if (data_type == DataType::MutableData)
-          PmidManager::template HandlePut<MutableData>(from, data_type);
+          PmidManager::template HandlePut<ImmutableData>(from, data_type);
         break;
       case Authority::managed_node:
         if (data_type == DataType::ImmutableData)
           PmidNode::template HandlePut<ImmutableData>(from, data_type);
         else if (data_type == DataType::MutableData)
-          PmidNode::template HandlePut<MutableData>(from, data_type);
+          PmidNode::template HandlePut<ImmutableData>(from, data_type);
         break;
       default:
         break;
@@ -202,8 +320,6 @@ class VaultFacade : public test::MaidManager<VaultFacade>,
     PmidManager::HandleChurn(diff);
   }
 
- private:
-  // RoutingNode routing_node_;
 };
 
 TEST(VaultNetworkTest, FUNC_CreateNetPutGetData) {
@@ -219,7 +335,7 @@ TEST(VaultNetworkTest, FUNC_CreateNetPutGetData) {
       maidsafe::test::CreateTestPath("RoutingNetworkInit_BEH_ConstructNode"));
 
 
-  RoutingNode<VaultFacade> n(ios, *test_dir / "node.sqlite3", pmid);
+  VaultFacade vault(ios, *test_dir / "node.sqlite3", pmid);
 
   auto value = NonEmptyString(RandomAlphaNumericString(65));
   Identity key{Identity(crypto::Hash<crypto::SHA512>(value))};
@@ -228,14 +344,16 @@ TEST(VaultNetworkTest, FUNC_CreateNetPutGetData) {
 
   Address from(Address(RandomString(Address::kSize)));
   Address to(Address(RandomString(Address::kSize)));
+  SourceAddress src_address = std::make_tuple(NodeAddress(), GroupAddress(),
+                                              ReplyToAddress());
+  vault.TriggerHandleGet(src_address, Authority::client_manager, Authority::nae_manager,
+                                        VaultFacade::DataType::ImmutableData, key);
+//  n.Get<ImmutableData>(key, from, [](asio::error_code /* error */) {});
+//  n.Get<MutableData>(key, from, [](asio::error_code /* error */) {});
 
-  n.Get<ImmutableData>(key, from, [](asio::error_code /* error */) {});
-  n.Get<MutableData>(key, from, [](asio::error_code /* error */) {});
-
-  n.Put<ImmutableData>(to, b, [](asio::error_code /* error */) {});
-  n.Put<MutableData>(to, a, [](asio::error_code /* error */) {});
+//  n.Put<ImmutableData>(to, b, [](asio::error_code /* error */) {});
+//  n.Put<MutableData>(to, a, [](asio::error_code /* error */) {});
 }
-
 
 }  // namespace test
 
